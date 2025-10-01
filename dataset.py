@@ -6,6 +6,9 @@ from albumentations.pytorch.functional import img_to_tensor
 from PIL import Image
 from pdb import set_trace
 
+# 解决PIL DecompressionBombError
+Image.MAX_IMAGE_PIXELS = None
+
 class RoboticsDataset(Dataset):
     def __init__(self, file_names, to_augment=False, transform=None, mode='train', problem_type=None):
         self.file_names = file_names
@@ -49,9 +52,21 @@ def load_image(path):
 
 def load_mask(path, problem_type):
     mask_name_path = str(path).replace('slide_tiles', 'label_tiles').replace('jpg', 'png')
-    img = Image.open(mask_name_path).getdata()
-    img_width, img_height = img.size
     
-    np_img = np.array(img, np.uint8).reshape((img_height, img_width))
+    try:
+        # 优先使用cv2读取，避免PIL的限制
+        img = cv2.imread(mask_name_path, cv2.IMREAD_GRAYSCALE)
+        if img is not None:
+            return img
+    except Exception as e:
+        print(f"cv2读取mask失败，尝试PIL: {e}")
     
-    return np_img
+    try:
+        # 如果cv2失败，使用PIL
+        img = Image.open(mask_name_path).getdata()
+        img_width, img_height = img.size
+        np_img = np.array(img, np.uint8).reshape((img_height, img_width))
+        return np_img
+    except Exception as e:
+        print(f"PIL读取mask也失败: {e}")
+        raise ValueError(f"无法读取mask文件: {mask_name_path}")

@@ -29,6 +29,7 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from pdb import set_trace
 from dataset import RoboticsDataset
+import wandb
 from albumentations import (
     HorizontalFlip,
     VerticalFlip,
@@ -78,6 +79,26 @@ def train(cfg, writer, logger):
     n_classes = 7 # the number of tissue subtype classes + 1
     logger.info("n_classes: {}".format(n_classes))
     
+    # 初始化wandb
+    if cfg['training'].get('wandb', {}).get('enabled', False):
+        wandb_config = cfg['training']['wandb']
+        wandb.init(
+            project=wandb_config.get('project', 'OST-DMMN'),
+            name=wandb_config.get('name', 'DMMN-OST-Experiment'),
+            tags=wandb_config.get('tags', ['OST', 'DMMN', 'segmentation']),
+            notes=wandb_config.get('notes', 'Osteosarcoma tissue segmentation using DMMN'),
+            config=cfg
+        )
+        logger.info("Wandb initialized successfully")
+    
+    # 获取模型保存路径配置
+    model_save_dir = cfg['model'].get('save_dir', 'runs/DMMN-OST')
+    model_save_name = cfg['model'].get('save_name', 'DMMN_ost_seg')
+    
+    # 创建模型保存目录
+    os.makedirs(model_save_dir, exist_ok=True)
+    logger.info(f"Model will be saved to: {model_save_dir}")
+    
     tile_size = 1024
     problem_type = 'tissue'
     workers = 12
@@ -116,11 +137,16 @@ def train(cfg, writer, logger):
             # Normalize(p=1)
         ], p=p)
     
-    train_file = "train_tiles.txt" # the list of training patches
+    # 从配置文件读取数据路径
+    train_file = cfg['data'].get('train_file', 'train_tiles.txt')
+    val_file = cfg['data'].get('val_file', 'val_tiles.txt')
+    
+    logger.info(f"Loading training data from: {train_file}")
+    logger.info(f"Loading validation data from: {val_file}")
+    
     with open(train_file) as f:
         train_file_names = [line.rstrip('\n') for line in f]
 
-    val_file = "val_tiles.txt" # the list of validation patches
     with open(val_file) as f:
         val_file_names = [line.rstrip('\n') for line in f]
         
@@ -235,6 +261,16 @@ def train(cfg, writer, logger):
 
                 logger.info(print_str)
                 writer.add_scalar('loss/train_loss', loss.item(), i+1)
+                
+                # 记录到wandb
+                if cfg['training'].get('wandb', {}).get('enabled', False):
+                    wandb.log({
+                        "train_loss": loss.item(),
+                        "avg_train_loss": train_loss_meter.avg,
+                        "learning_rate": optimizer.param_groups[0]['lr'],
+                        "iteration": i + 1
+                    })
+                
                 time_meter.reset()
                 logger.info("avg train loss: " + str(train_loss_meter.avg))
                 fileEpochLoss.write(str(train_loss_meter.avg))
@@ -277,6 +313,27 @@ def train(cfg, writer, logger):
                 fileEpochLossVal.write('\n')
 
                 score, class_iou, hist, mean_iu, recalls, precisions, average_recall, average_precision = running_metrics_val.get_scores()
+                
+                # 记录验证指标到wandb
+                if cfg['training'].get('wandb', {}).get('enabled', False):
+                    wandb_metrics = {
+                        "val_loss": val_loss_meter.avg,
+                        "mean_iu": mean_iu,
+                        "average_recall": average_recall,
+                        "average_precision": average_precision,
+                        "iteration": i + 1
+                    }
+                    
+                    # 添加每个类别的IoU
+                    for k, v in class_iou.items():
+                        wandb_metrics[f"class_{k}_iou"] = v
+                    
+                    # 添加其他指标
+                    for k, v in score.items():
+                        wandb_metrics[f"val_{k.replace(' ', '_').replace(':', '').lower()}"] = v
+                    
+                    wandb.log(wandb_metrics)
+                
                 for k, v in score.items():
                     print(k, v)
                     logger.info('{}: {}'.format(k, v))
@@ -307,16 +364,29 @@ def train(cfg, writer, logger):
                         "scheduler_state": scheduler.state_dict(),
                         "best_iou": best_iou,
                     }
-                    save_path = os.path.join(writer.file_writer.get_logdir(),
-                                             "{}_{}_best_model.pkl".format(
-                                                 cfg['model']['arch'],
-                                                 cfg['data']['dataset']))
+                    # 使用配置文件中的保存路径
+                    save_path = os.path.join(model_save_dir,
+                                             f"{model_save_name}_best_model.pkl")
                     torch.save(state, save_path)
+                    logger.info(f'Model saved to: {save_path}')
                     logger.info('current_best_iou_value  {}'.format(best_iou))
+                    
+                    # 记录到wandb
+                    if cfg['training'].get('wandb', {}).get('enabled', False):
+                        wandb.log({
+                            "best_iou": best_iou,
+                            "epoch": i + 1,
+                            "model_save_path": save_path
+                        })
 
             if (i + 1) == cfg['training']['train_iters']:
                 flag = False
                 break
+    
+    # 训练结束，关闭wandb
+    if cfg['training'].get('wandb', {}).get('enabled', False):
+        wandb.finish()
+        logger.info("Wandb session finished")
 
 
 if __name__ == "__main__":
@@ -325,7 +395,7 @@ if __name__ == "__main__":
         "--config",
         nargs="?",
         type=str,
-        default="configs/DMMN-breast.yml",
+        default="configs/DMMN-OST.yml",
         help="Configuration file to use"
     )
 

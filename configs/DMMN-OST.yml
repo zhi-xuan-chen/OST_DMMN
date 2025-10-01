@@ -1,0 +1,38 @@
+model:
+    arch: DMMN
+    save_dir: 'runs/DMMN-OST'  # 模型保存目录
+    save_name: 'DMMN_ost_seg'  # 模型保存名称前缀
+data:
+    dataset: ost_seg
+    train_file: 'train_tiles.txt'  # 训练数据文件列表
+    val_file: 'val_tiles.txt'      # 验证数据文件列表
+    train_split: train_aug
+    val_split: val
+    img_rows: 'same'
+    img_cols: 'same'
+    path: 
+training:
+    train_iters: 20000
+    batch_size: 4
+    val_interval: 1000
+    n_workers: 12
+    print_interval: 100
+    optimizer:
+        name: 'sgd'
+        lr: 0.01
+        weight_decay: 0.0005
+        momentum: 0.9
+    loss:
+        name: 'cross_entropy'
+        size_average: True
+    lr_schedule:
+        name: 'poly'
+        power: 0.9
+    resume:
+    # Wandb配置
+    wandb:
+        enabled: true
+        project: 'OST-DMMN'
+        name: 'DMMN-OST-Experiment'
+        tags: ['OST', 'DMMN', 'segmentation']
+        notes: 'Osteosarcoma tissue segmentation using DMMN' 

@@ -4,8 +4,13 @@ import openslide
 import skimage.morphology
 import PIL.Image as Image
 
-def find_level(slide,res,maxres=20.):
-    maxres = float(slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER])
+def find_level(slide,res,maxres=40.):
+    # 尝试获取目标放大倍数，如果不存在则使用默认值40x
+    try:
+        maxres = float(slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER])
+    except KeyError:
+        print(f"警告: 无法获取目标放大倍数，使用默认值 {maxres}")
+    
     downsample = maxres/res
     for i in range(slide.level_count)[::-1]:
         if slide.level_downsamples[i] <= (downsample+downsample*0.0001):
@@ -25,9 +30,35 @@ def image2array(img):
             r,g,b,a = np.rollaxis(img, axis=-1)
             img=np.stack([r,g,b],axis=-1)
         else:
-            sys.exit('Error: image is not RGB slide')
+            print('Warning: image is not RGB, converting to RGB')
+            img = img.convert('RGB')
+            img = np.array(img)
+    else:
+        # 如果已经是numpy数组，确保是正确的格式
+        img = np.array(img)
+    
+    # 确保img是numpy数组
+    if not isinstance(img, np.ndarray):
+        img = np.array(img)
+    
     img=np.uint8(img)
-    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # 检查图像通道数
+    print(f"Debug: img type: {type(img)}, shape: {img.shape if hasattr(img, 'shape') else 'no shape'}")
+    
+    if len(img.shape) == 3 and img.shape[2] == 3:
+        # 确保数组是连续的
+        img = np.ascontiguousarray(img)
+        return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    elif len(img.shape) == 2:
+        return img
+    else:
+        print(f"Warning: Unexpected image shape {img.shape}, converting to grayscale")
+        if len(img.shape) == 3:
+            img = np.ascontiguousarray(img)
+            return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        else:
+            return img
 
 def is_sample(img,threshold=0.9,ratioCenter=0.1,wholeAreaCutoff=0.5,centerAreaCutoff=0.9):
     nrows,ncols=img.shape
@@ -88,7 +119,13 @@ def make_sample_grid(slide,patch_size=224,res=20.,min_cc_size=10,max_ratio_size=
     in the form of (x,y) coordinates for patch extraction of sample patches.
     It has an erode option to make sure to get patches that are full of tissue.
     It has a prune option to check if patches are sample. It is slow.'''
-    maxres = float(slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER])
+    # 尝试获取目标放大倍数，如果不存在则使用默认值40x
+    try:
+        maxres = float(slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER])
+    except KeyError:
+        print(f"警告: 无法获取目标放大倍数，使用默认值 40.0")
+        maxres = 40.0
+    
     img,th = threshold(slide,patch_size,res,maxres)
     img = filter_regions(img,min_cc_size,max_ratio_size)
     img[img>0]=1
@@ -164,7 +201,12 @@ def plot_extraction(slide,patch_size=224,res=20,min_cc_size=10,max_ratio_size=10
     if save:
         plt.switch_backend('agg')
 
-    maxres = float(slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER])
+    # 尝试获取目标放大倍数，如果不存在则使用默认值40x
+    try:
+        maxres = float(slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER])
+    except KeyError:
+        print(f"警告: 无法获取目标放大倍数，使用默认值 40.0")
+        maxres = 40.0
     grid,_ = make_sample_grid(slide,patch_size,res,min_cc_size,max_ratio_size,erode,prune,overlap)
     thumb = slide.get_thumbnail((np.round(slide.dimensions[0]/50.),np.round(slide.dimensions[1]/50.)))
 

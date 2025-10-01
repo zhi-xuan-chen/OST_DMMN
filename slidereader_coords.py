@@ -19,7 +19,7 @@ if __name__ == '__main__':
         slide = openslide.OpenSlide(image_path)
         slide_id = os.path.splitext(os.path.basename(image_path))[0]
         grid, _ = extract_tissue.make_sample_grid(slide, 256,
-               20, 10, 10, False, prune=False, overlap=0)
+               40, 10, 10, False, prune=False, overlap=0)
         for (x,y) in grid:
             coord_file.write('{},{},{},0\n'.format(slide_id, x, y))
 

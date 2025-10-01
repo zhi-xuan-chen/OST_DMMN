@@ -1,0 +1,9 @@
+label	GT_code
+unlabeled	0
+Non-Bone Active Tumor	1
+Bone Active Tumor	2
+Non-Bone Necrosis	3
+Bone Necrosis	4
+Normal Tissue	5
+Background	6
+Sparse Cellular Area	7
