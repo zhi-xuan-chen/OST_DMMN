@@ -103,8 +103,6 @@ def create_directories(output_dir):
     dirs = [
         os.path.join(output_dir, 'slide_tiles'),
         os.path.join(output_dir, 'label_tiles'),
-        os.path.join(output_dir, 'train'),
-        os.path.join(output_dir, 'val'),
         os.path.join(output_dir, 'configs')
     ]
     for dir_path in dirs:
@@ -301,6 +299,9 @@ def generate_training_config(output_dir, num_classes, class_id_to_name,
         class_id_to_name: 类别ID到名称的映射
         base_config_path: 基础配置文件路径（可选）
     """
+    train_file_abs = os.path.join(output_dir, 'train_tiles.txt')
+    val_file_abs = os.path.join(output_dir, 'val_tiles.txt')
+
     config = {
         'model': {
             'arch': 'DMMN',
@@ -310,8 +311,8 @@ def generate_training_config(output_dir, num_classes, class_id_to_name,
         },
         'data': {
             'dataset': 'custom',
-            'train_file': 'train_tiles.txt',
-            'val_file': 'val_tiles.txt',
+            'train_file': train_file_abs,
+            'val_file': val_file_abs,
             'n_classes': num_classes,
             'train_split': 'train_aug',
             'val_split': 'val',
@@ -357,6 +358,9 @@ def generate_training_config(output_dir, num_classes, class_id_to_name,
             # 更新类别相关配置
             base_config['model']['n_classes'] = num_classes
             base_config['data']['n_classes'] = num_classes
+            # 覆盖为本次数据处理生成的绝对路径，避免相对路径不一致
+            base_config['data']['train_file'] = train_file_abs
+            base_config['data']['val_file'] = val_file_abs
             base_config['classes'] = class_id_to_name
             config = base_config
             print(f"基于 {base_config_path} 生成配置文件")
@@ -394,6 +398,8 @@ def main():
     
     args = parser.parse_args()
     
+    # 标准化为绝对路径，确保下游文件和txt中写入绝对路径
+    args.output_dir = os.path.abspath(args.output_dir)
     # 创建输出目录
     create_directories(args.output_dir)
     

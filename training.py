@@ -52,6 +52,7 @@ from itertools import chain
 from torch.nn import Module, Conv2d, ConvTranspose2d
 import torch.nn.init as init
 from torch.autograd import Variable
+import cv2
 
 def count_conv2d(module: Module):
     """
@@ -65,7 +66,7 @@ def init_weights(m):
         init.kaiming_normal_(m.weight, nonlinearity='relu')
         init.constant(m.bias,0.0)
 
-def train(cfg, writer, logger):
+def train(cfg, writer, logger, config_path=None):
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -76,7 +77,8 @@ def train(cfg, writer, logger):
     torch.backends.cudnn.benchmark = False
     random.seed(999)
 
-    n_classes = 7 # the number of tissue subtype classes + 1
+    # 从配置文件读取类别数量
+    n_classes = cfg['data'].get('n_classes', 7)
     logger.info("n_classes: {}".format(n_classes))
     
     # 初始化wandb
@@ -189,9 +191,60 @@ def train(cfg, writer, logger):
 
     # weighted cross entropy
     # Note class 0 is unannotated regions and will not contribute to the loss function.
-    d = {1: 1089821796.0, 2: 919491139.0, 3: 1161456798.0, 4: 1175882130.0, 5: 1170302499.0, 6: 1335408670.0} # the number of pixels of each class in the training set
-    d_sum = sum(d.values())
-    class_weights = [0, 1-d[1]/d_sum, 1-d[2]/d_sum, 1-d[3]/d_sum, 1-d[4]/d_sum, 1-d[5]/d_sum, 1-d[6]/d_sum]
+    # 从配置文件读取类别权重；若未提供，则从训练集mask中统计计算
+    if 'class_weights' in cfg['data']:
+        class_weights = cfg['data']['class_weights']
+        logger.info("Using class weights from config: {}".format(class_weights))
+    else:
+        logger.info("Computing class weights from training masks ...")
+        counts = np.zeros(n_classes, dtype=np.int64)
+        for name in tqdm(train_file_names, desc="Counting class pixels"):
+            try:
+                parts = name.split(",")
+                # 构造对应的mask路径：{output_dir}/label_tiles/{tile_name}.png
+                mask_path = os.path.join(parts[0], "label_tiles", parts[1] + ".png")
+                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                if mask is None:
+                    raise ValueError("cv2.imread returned None")
+                binc = np.bincount(mask.reshape(-1), minlength=n_classes)
+                # 限制到前n_classes个类别
+                counts += binc[:n_classes]
+            except Exception as e:
+                logger.info(f"Failed to read mask for {name}: {e}")
+                continue
+
+        sum_foreground = int(counts[1:].sum())
+        if sum_foreground == 0:
+            raise ValueError("No foreground pixels found when computing class weights. Please check your masks or configuration.")
+
+        class_weights = [0.0] * n_classes
+        for k in range(1, n_classes):
+            class_weights[k] = 1.0 - (counts[k] / sum_foreground)
+        logger.info("Computed class weights from data: {}".format(class_weights))
+        
+        # 将计算好的class_weights保存到配置文件，避免重复计算
+        try:
+            if config_path is None:
+                config_path = 'configs/DMMN-OST.yml'
+            if os.path.exists(config_path):
+                # 读取现有配置
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = yaml.safe_load(f)
+                
+                # 更新class_weights
+                if 'data' not in config_data:
+                    config_data['data'] = {}
+                config_data['data']['class_weights'] = class_weights
+                
+                # 保存更新后的配置
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
+                
+                logger.info(f"Updated class_weights in config file: {config_path}")
+            else:
+                logger.info(f"Config file not found: {config_path}, skipping class_weights update")
+        except Exception as e:
+            logger.warning(f"Failed to update config file with class_weights: {e}")
 
     start_time=datetime.now()
     start_iter = 0
@@ -418,4 +471,4 @@ if __name__ == "__main__":
     logger = get_logger(logdir)
     logger.info('Start training:')
 
-    train(cfg, writer, logger)
+    train(cfg, writer, logger, args.config)
