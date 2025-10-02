@@ -4,8 +4,7 @@
 # 使用方法: bash scripts/train.sh
 
 # 使用数据处理生成的完整配置文件（推荐）
-python training.py --config processed_data/configs/training_config.yml
-
+CUDA_VISIBLE_DEVICES=0 python /home/chenzhixuan/Workspace/OST_DMMN/training.py --config /home/chenzhixuan/Workspace/OST_DMMN/configs/DMMN-OST.yml
 # 或者使用默认配置文件
 # python training.py --config configs/DMMN-OST.yml
 

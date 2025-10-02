@@ -4,6 +4,7 @@ import cv2
 from torch.utils.data import Dataset
 from albumentations.pytorch.functional import img_to_tensor
 from PIL import Image
+import os
 from pdb import set_trace
 
 # 解决PIL DecompressionBombError
@@ -25,7 +26,7 @@ class RoboticsDataset(Dataset):
 
         if self.mode == 'train':
             img_file_name_split = img_file_name.split(",")
-            img_file_name_path = img_file_name_split[0] + "slide_tiles/" + img_file_name_split[1] + ".jpg"
+            img_file_name_path = os.path.join(img_file_name_split[0], "slide_tiles", img_file_name_split[1] + ".jpg")
             image = cv2.imread(str(img_file_name_path))
             mask = load_mask(img_file_name_path, self.problem_type)      
             data = {"image": image, "mask": mask}
@@ -37,7 +38,7 @@ class RoboticsDataset(Dataset):
                 return img_to_tensor(image), torch.from_numpy(mask).long()
         else:
             img_file_name_split = img_file_name.split(",")
-            img_file_name_path = img_file_name_split[0] + img_file_name_split[1] + ".jpg"
+            img_file_name_path = os.path.join(img_file_name_split[0], img_file_name_split[1] + ".jpg")
             image = cv2.imread(str(img_file_name_path))
             data = {"image": image}
             augmented = self.transform(**data)
@@ -51,7 +52,14 @@ def load_image(path):
 
 
 def load_mask(path, problem_type):
-    mask_name_path = str(path).replace('slide_tiles', 'label_tiles').replace('jpg', 'png')
+    # 用路径拼接避免丢失斜杠
+    path = str(path)
+    dir_path = os.path.dirname(path)
+    base = os.path.basename(path)
+    # 将 slide_tiles -> label_tiles, .jpg -> .png
+    dir_path = dir_path.replace(os.sep + 'slide_tiles', os.sep + 'label_tiles')
+    base = base.replace('.jpg', '.png')
+    mask_name_path = os.path.join(dir_path, base)
     
     try:
         # 优先使用cv2读取，避免PIL的限制
