@@ -10,13 +10,13 @@ classes:
 data:
   class_weights:
   - 0.0
-  - 0.7898569777639803
-  - 0.9511423008402887
-  - 0.8151685906450032
-  - 0.9593152457393542
-  - 0.530559841465684
-  - 0.9703470967097512
-  - 0.9836099468359383
+  - 0.7967361008442999
+  - 0.9621065027409531
+  - 0.8139716422884785
+  - 0.9604389227617818
+  - 0.5096990504249257
+  - 0.9724016033117096
+  - 0.9846461776278514
   dataset: custom
   img_cols: same
   img_rows: same
@@ -33,10 +33,8 @@ model:
   save_dir: /jhcnas5/chenzhixuan/checkpoints/DMMN-OST
   save_name: DMMN_ost_seg
 training:
-  # 训练设置：可以选择epochs或train_iters（优先使用epochs）
-  epochs: 50  # 训练轮数（推荐）
-  # train_iters: 10000  # 总迭代数（如果设置了epochs则忽略此项）
   batch_size: 48
+  epochs: 50
   loss:
     name: cross_entropy
     size_average: true

@@ -139,9 +139,9 @@ def resize_mask_to_slide(mask_path, slide_dimensions, gt_code_to_class=None):
     return mask_array
 
 def extract_patches_from_slide_and_mask(slide_path, mask_path, output_dir, 
-                                      patch_size=1024, stride=256, 
-                                      tissue_detection=True, min_tissue_ratio=0.1,
-                                      gt_code_to_class=None):
+                                     patch_size=1024, stride=256, center_size=256,
+                                     tissue_detection=True, min_tissue_ratio=0.1,
+                                     gt_code_to_class=None):
     """
     从WSI和mask中提取patches
     
@@ -152,7 +152,8 @@ def extract_patches_from_slide_and_mask(slide_path, mask_path, output_dir,
         patch_size: patch大小
         stride: 步长
         tissue_detection: 是否使用tissue检测
-        min_tissue_ratio: 最小tissue比例阈值
+        center_size: 用于筛选的中心区域边长（像素），默认256
+        min_tissue_ratio: 最小tissue比例阈值（在中心区域内计算）
         gt_code_to_class: GT_code到class_id的映射字典
     """
     print(f"处理文件: {slide_path}")
@@ -167,7 +168,7 @@ def extract_patches_from_slide_and_mask(slide_path, mask_path, output_dir,
     # 获取tissue区域坐标
     if tissue_detection:
         print("使用tissue检测...")
-        print(f"使用stride: {stride}, patch_size: {patch_size}")
+        print(f"使用stride: {stride}, patch_size: {patch_size}, center_size: {center_size}")
         print(f"Mask尺寸: {mask.shape}")
         print(f"Slide尺寸: {slide.dimensions}")
         
@@ -176,11 +177,15 @@ def extract_patches_from_slide_and_mask(slide_path, mask_path, output_dir,
         grid = []
         for x in range(0, slide.dimensions[0] - patch_size + 1, stride):
             for y in range(0, slide.dimensions[1] - patch_size + 1, stride):
-                # 检查这个位置是否有足够的tissue（非背景）
+                # 检查中心区域是否有足够的tissue（非背景）
                 # 假设背景类别为0，其他类别都是tissue
-                mask_region = mask[y:y+patch_size, x:x+patch_size]
-                tissue_pixels = np.sum(mask_region > 0)  # 非背景像素
-                tissue_ratio = tissue_pixels / (patch_size * patch_size)
+                eff_center = int(min(center_size, patch_size))
+                offset = (patch_size - eff_center) // 2
+                cy0 = y + offset
+                cx0 = x + offset
+                mask_center = mask[cy0:cy0+eff_center, cx0:cx0+eff_center]
+                tissue_pixels = np.sum(mask_center > 0)  # 非背景像素
+                tissue_ratio = tissue_pixels / float(eff_center * eff_center)
                 
                 if tissue_ratio >= min_tissue_ratio:
                     grid.append((x, y))
@@ -215,8 +220,11 @@ def extract_patches_from_slide_and_mask(slide_path, mask_path, output_dir,
             
             # 检查tissue比例（如果启用tissue检测）
             if tissue_detection:
-                # 计算非零像素比例
-                tissue_ratio = np.count_nonzero(mask_patch) / (patch_size * patch_size)
+                # 计算中心区域的非零像素比例
+                eff_center = int(min(center_size, patch_size))
+                offset = (patch_size - eff_center) // 2
+                mask_center = mask_patch[offset:offset+eff_center, offset:offset+eff_center]
+                tissue_ratio = float(np.count_nonzero(mask_center)) / float(eff_center * eff_center)
                 if tissue_ratio < min_tissue_ratio:
                     continue
             
@@ -392,8 +400,9 @@ def main():
     parser.add_argument('--base_config', type=str, help='基础配置文件路径（可选）')
     parser.add_argument('--patch_size', type=int, default=1024, help='patch大小')
     parser.add_argument('--stride', type=int, default=256, help='步长')
+    parser.add_argument('--center_size', type=int, default=256, help='用于筛选的中心区域边长')
     parser.add_argument('--tissue_detection', action='store_true', help='使用tissue检测')
-    parser.add_argument('--min_tissue_ratio', type=float, default=0.1, help='最小tissue比例')
+    parser.add_argument('--min_tissue_ratio', type=float, default=1.0, help='最小tissue比例')
     parser.add_argument('--train_ratio', type=float, default=0.8, help='训练集比例')
     
     args = parser.parse_args()
@@ -448,6 +457,7 @@ def main():
             str(wsi_path), str(mask_path), args.output_dir,
             patch_size=args.patch_size,
             stride=args.stride,
+            center_size=args.center_size,
             tissue_detection=args.tissue_detection,
             min_tissue_ratio=args.min_tissue_ratio,
             gt_code_to_class=gt_code_to_class

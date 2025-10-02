@@ -164,6 +164,32 @@ def make_sample_panel(img_rgb: np.ndarray, gt_mask_rgb: np.ndarray, pred_mask_rg
     panel = np.concatenate([img_c, gt_c, pred_c], axis=1)
     return panel
 
+def render_legend(panel_width: int, class_labels: dict, palette: list):
+    """
+    生成图例条：每行一个颜色块 + 文本标签，宽度与面板一致。
+    """
+    try:
+        import cv2 as _cv2
+    except Exception:
+        return None
+    rows = [k for k in sorted(class_labels.keys()) if k < len(palette)]
+    if not rows:
+        return None
+    row_h = 26
+    pad = 6
+    legend_h = pad + len(rows) * (row_h + pad)
+    legend = np.ones((legend_h, panel_width, 3), dtype=np.uint8) * 255
+    y = pad
+    for k in rows:
+        color = palette[k]
+        label = f"{k}: {class_labels.get(k, f'class_{k}') }"
+        # color box
+        _cv2.rectangle(legend, (pad, y), (pad + row_h, y + row_h), (int(color[2]), int(color[1]), int(color[0])), thickness=-1)
+        # text
+        _cv2.putText(legend, label, (pad + row_h + 8, y + int(row_h*0.8)), _cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 1, _cv2.LINE_AA)
+        y += row_h + pad
+    return legend
+
 def train(cfg, writer, logger, config_path=None):
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -293,7 +319,6 @@ def train(cfg, writer, logger, config_path=None):
     pytorch_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info("pytorch_trainable_params {}".format(pytorch_trainable_params))
     logger.info("Model Layers {}".format(count_conv2d(model)))
-    
 
     model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
 
@@ -528,6 +553,8 @@ def train(cfg, writer, logger, config_path=None):
                         outputs = model(images_20x_val,images_10x_val,images_5x_val)
                         val_loss = loss_fn(input=outputs, target=labels_20x_val, class_weights=class_weights)
 
+                        print(val_loss)
+
                         pred = outputs.data.max(1)[1].cpu().numpy()
                         gt = labels_20x_val.data.cpu().numpy()
 
@@ -535,7 +562,7 @@ def train(cfg, writer, logger, config_path=None):
                         val_loss_meter.update(val_loss.item())
                         num_val_used += 1
 
-                        # 收集样例：仅前 max_samples_to_log 个 batch
+                        # 收集样例：仅前 max_samples_to_log 个 batch（只上传一组拼接图，并在 caption 中写明含义与类别图例）
                         if cfg['training'].get('wandb', {}).get('enabled', False) and len(sample_panels) < max_samples_to_log:
                             try:
                                 # 还原原图（注意训练时做了裁剪与缩放，这里取与 labels 对齐的中心 256 区域）
@@ -553,7 +580,24 @@ def train(cfg, writer, logger, config_path=None):
                                 pred_rgb = colorize_mask(pred_mask, palette)
 
                                 panel = make_sample_panel(img_rgb, gt_rgb, pred_rgb)
-                                sample_panels.append(panel)
+                                # 生成图例条并附加到面板下方
+                                class_labels = {}
+                                try:
+                                    if 'classes' in cfg and isinstance(cfg['classes'], dict):
+                                        for kk, vv in cfg['classes'].items():
+                                            class_labels[int(kk)] = str(vv)
+                                    else:
+                                        class_labels = {ii: f'class_{ii}' for ii in range(n_classes)}
+                                except Exception:
+                                    class_labels = {ii: f'class_{ii}' for ii in range(n_classes)}
+
+                                legend = render_legend(panel.shape[1], class_labels, palette)
+                                if legend is not None:
+                                    panel_with_legend = np.concatenate([panel, legend], axis=0)
+                                else:
+                                    panel_with_legend = panel
+
+                                sample_panels.append(panel_with_legend)
                             except Exception as _:
                                 pass
 
@@ -597,8 +641,8 @@ def train(cfg, writer, logger, config_path=None):
 
                     # 追加样例图
                     if len(sample_panels) > 0:
-                        # 将样例拼为网格或逐张上传（逐张更清晰）
-                        wandb_images = [wandb.Image(p, caption=f"val_sample_{idx}") for idx, p in enumerate(sample_panels)]
+                        # 将样例逐张上传，caption 明确含义
+                        wandb_images = [wandb.Image(p, caption=f"val_sample_{idx}: [Left: Image | Middle: GT | Right: Pred] with legend") for idx, p in enumerate(sample_panels)]
                         wandb_metrics['val/samples'] = wandb_images
 
                     wandb.log(wandb_metrics, step=i+1)
@@ -611,35 +655,7 @@ def train(cfg, writer, logger, config_path=None):
                 for k, v in class_iou.items():
                     logger.info('{}: {}'.format(k, v))
                     writer.add_scalar('val_metrics/cls_{}'.format(k), v, i+1)
-
-                val_loss_meter.reset()
-                running_metrics_val.reset()
-                fileMiou.write(str(mean_iu))
-                fileMiou.write('\n')
-                np.savetxt(os.path.join(writer.file_writer.get_logdir(), "hist.csv"), hist, delimiter=",")
-                logger.info('recalls  {}'.format(recalls))
-                logger.info('average_recall  {}'.format(average_recall))
-                logger.info('precisions  {}'.format(precisions))
-                logger.info('average_precision  {}'.format(average_precision))
                 
-                # 计算训练时间统计
-                elapsed_time = datetime.now() - start_time
-                total_hours = elapsed_time.total_seconds() / 3600
-                
-                logger.info('time since start = {}'.format(elapsed_time))
-                logger.info('total training time = {:.2f} hours'.format(total_hours))
-                
-                # 打印验证结果摘要
-                current_epoch = (i + 1) // iterations_per_epoch + 1
-                print(f"\n{'='*60}")
-                print(f"Validation Results (Epoch {current_epoch}/{total_epochs}, Iter {i+1})")
-                print(f"{'='*60}")
-                print(f"Val Loss: {val_loss_meter.avg:.4f}")
-                print(f"Mean IoU: {mean_iu:.4f}")
-                print(f"Best IoU: {best_iou:.4f}")
-                print(f"Training Time: {total_hours:.2f}h")
-                print(f"{'='*60}\n")
-
                 if score["Mean IoU : \t"] >= best_iou:
                     best_iou = score["Mean IoU : \t"]
                     state = {
@@ -664,6 +680,34 @@ def train(cfg, writer, logger, config_path=None):
                             'epoch': epoch_float,
                             'artifact/model_save_path': save_path
                         }, step=i+1)
+                
+                # 计算训练时间统计
+                elapsed_time = datetime.now() - start_time
+                total_hours = elapsed_time.total_seconds() / 3600
+                
+                logger.info('time since start = {}'.format(elapsed_time))
+                logger.info('total training time = {:.2f} hours'.format(total_hours))
+                
+                # 打印验证结果摘要
+                current_epoch = (i + 1) // iterations_per_epoch + 1
+                print(f"\n{'='*60}")
+                print(f"Validation Results (Epoch {current_epoch}/{total_epochs}, Iter {i+1})")
+                print(f"{'='*60}")
+                print(f"Val Loss: {val_loss_meter.avg:.4f}")
+                print(f"Mean IoU: {mean_iu:.4f}")
+                print(f"Best IoU: {best_iou:.4f}")
+                print(f"Training Time: {total_hours:.2f}h")
+                print(f"{'='*60}\n")
+
+                val_loss_meter.reset()
+                running_metrics_val.reset()
+                fileMiou.write(str(mean_iu))
+                fileMiou.write('\n')
+                np.savetxt(os.path.join(writer.file_writer.get_logdir(), "hist.csv"), hist, delimiter=",")
+                logger.info('recalls  {}'.format(recalls))
+                logger.info('average_recall  {}'.format(average_recall))
+                logger.info('precisions  {}'.format(precisions))
+                logger.info('average_precision  {}'.format(average_precision))
 
             if (i + 1) == cfg['training']['train_iters']:
                 flag = False
